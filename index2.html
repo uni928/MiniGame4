@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>絵文字の敵を倒す（ランダム移動＆絵文字）</title>
+<style>
+  :root{--bg:#0f1220;--accent:#5ee1a8;--bar:#e75e7a;--text:#e5e7eb;}
+  html,body{height:100%;margin:0;overflow:hidden;background:radial-gradient(80vmax 80vmax at 50% 20%, #1b1e37, var(--bg) 60%);color:var(--text);font-family:sans-serif;user-select:none}
+  canvas{position:fixed;inset:0;cursor:crosshair;display:block}
+  .hud{position:fixed;top:16px;left:16px;right:16px;display:flex;gap:12px;align-items:center;z-index:3}
+  .card{background:rgba(22,26,46,.8);backdrop-filter:blur(6px);border-radius:14px;padding:10px 12px;border:1px solid rgba(255,255,255,.1)}
+  .hpbar{flex:1;position:relative;height:16px;background:#2a2f53;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+  .hpfill{position:absolute;left:0;top:0;bottom:0;width:100%;background:linear-gradient(90deg,#ff7aa3,var(--bar));box-shadow:0 0 16px rgba(231,94,122,.6) inset}
+  .hptext{width:60px;text-align:right}
+  .btn{background:var(--accent);color:#0b1321;border:none;padding:8px 12px;border-radius:10px;font-weight:700;cursor:pointer}
+  .btn:active{transform:translateY(1px)}
+  .victory{position:fixed;inset:0;display:grid;place-items:center;font-size:min(15vw,100px);font-weight:900;color:white;text-shadow:0 6px 32px rgba(0,0,0,.5);opacity:0;transition:opacity .4s ease;pointer-events:none}
+  .victory.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="card" style="display:flex;align-items:center;gap:8px;width:70%">
+    <span>HP</span>
+    <div class="hpbar"><div class="hpfill" id="hpFill"></div></div>
+    <span class="hptext" id="hpText">100%</span>
+  </div>
+  <button class="btn" id="resetBtn">リセット</button>
+</div>
+<canvas id="stage"></canvas>
+<div class="victory" id="victory">撃破！</div>
+<script>
+(function(){
+  const canvas=document.getElementById('stage');
+  const ctx=canvas.getContext('2d');
+  const hpFill=document.getElementById('hpFill');
+  const hpText=document.getElementById('hpText');
+  const victory=document.getElementById('victory');
+  const resetBtn=document.getElementById('resetBtn');
+
+  const ENEMY_LIST=['👹','🧟‍♂️','👺','💀','👾','🤖','🦈','🐉','🐍','🦂','🦖','🦇','🧛‍♂️','🦑','🦀','🐲','🐊','🐗','🦕','👿'];
+  let ENEMY_EMOJI=ENEMY_LIST[Math.floor(Math.random()*ENEMY_LIST.length)];
+
+  const ENEMY_FONT_BASE=240;
+  let enemy={x:0,y:0,r:110,hp:1000,hpMax:1000,pulse:0,vx:0,vy:0,changeAt:0};
+
+  const SLASH_RATE_MS=33, RUN_DURATION=1060, HEAD_LEN=1060, LINE_WIDTH=3, MAX_DMG=18, MOVE_DIST_MIN=14, MIN_SPEED=0.25;
+  const ENEMY_SPEED_MIN=90, ENEMY_SPEED_MAX=180, ENEMY_TURN_MIN=600, ENEMY_TURN_MAX=1400, ENEMY_MARGIN=40;
+
+  let W=0,H=0,dpr=1;
+  function resize(){
+    dpr=Math.max(1,Math.min(2,devicePixelRatio||1));
+    canvas.width=innerWidth*dpr;canvas.height=innerHeight*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+    W=innerWidth;H=innerHeight;enemy.x=W/2;enemy.y=H/2+20;
+    const base=Math.min(ENEMY_FONT_BASE,Math.floor(W*0.25));ctx.font=`${base}px "Apple Color Emoji","Segoe UI Emoji"`;enemy.r=Math.max(80,Math.floor(base*0.45));
+  }
+  addEventListener('resize',resize);resize();
+
+  let slashes=[];let dragging=false,lastEmit=0,lastPos={x:0,y:0},pointerPos={x:0,y:0},lastMoveTime=0;
+
+  function getPoint(e){if(e.touches){return{x:e.touches[0].clientX,y:e.touches[0].clientY}}return{x:e.clientX,y:e.clientY}}
+  function pointerDown(e){
+    const p=getPoint(e);
+    dragging=true; victory.classList.remove('show');
+    lastPos=pointerPos=p;
+    lastMoveTime=performance.now();
+    lastEmit=lastMoveTime; // ★ 初期化：巨大dtによる速度ゼロ扱いを防ぐ
+  }
+  function pointerMove(e){pointerPos=getPoint(e);lastMoveTime=performance.now();}
+  function pointerUp(){dragging=false;}
+  canvas.addEventListener('mousedown',pointerDown);canvas.addEventListener('mousemove',pointerMove);addEventListener('mouseup',pointerUp);
+  canvas.addEventListener('touchstart',pointerDown,{passive:false});canvas.addEventListener('touchmove',pointerMove,{passive:false});addEventListener('touchend',pointerUp);
+
+  function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+  function easeOutQuad(t){return 1-(1-t)*(1-t)}
+  function randRange(a,b){return a+Math.random()*(b-a)}
+
+  function enemyPickDirection(ts){
+    const angle=Math.random()*Math.PI*2;const speed=randRange(ENEMY_SPEED_MIN,ENEMY_SPEED_MAX);
+    enemy.vx=Math.cos(angle)*speed;enemy.vy=Math.sin(angle)*speed;enemy.changeAt=ts+randRange(ENEMY_TURN_MIN,ENEMY_TURN_MAX);
+  }
+
+  function updateEnemy(dt,ts){
+    if(ts>=enemy.changeAt)enemyPickDirection(ts);
+    enemy.x+=enemy.vx*(dt/1000);enemy.y+=enemy.vy*(dt/1000);
+    if(enemy.x<ENEMY_MARGIN){enemy.x=ENEMY_MARGIN;enemy.vx=Math.abs(enemy.vx);}
+    if(enemy.x>W-ENEMY_MARGIN){enemy.x=W-ENEMY_MARGIN;enemy.vx=-Math.abs(enemy.vx);}
+    if(enemy.y<ENEMY_MARGIN+32){enemy.y=ENEMY_MARGIN+32;enemy.vy=Math.abs(enemy.vy);}
+    if(enemy.y>H-ENEMY_MARGIN){enemy.y=H-ENEMY_MARGIN;enemy.vy=-Math.abs(enemy.vy);}
+  }
+
+  function addSlash(center,angle){
+    const dx=Math.cos(angle),dy=Math.sin(angle);const L=Math.hypot(W,H)*1.5;
+    const x1=center.x-dx*L/2,y1=center.y-dy*L/2;const x2=center.x+dx*L/2,y2=center.y+dy*L/2;const len=Math.hypot(x2-x1,y2-y1);
+    let uHit=0;{const vx=x2-x1,vy=y2-y1;const vv=vx*vx+vy*vy;uHit=vv?((enemy.x-x1)*vx+(enemy.y-y1)*vy)/vv:0;uHit=clamp(uHit,0,1)}
+    slashes.push({x1,y1,x2,y2,len,t0:performance.now(),hit:false,uHit});lastPos=center;
+  }
+
+  function maybeEmitSlash(ts){
+    if(!dragging) return;
+    if(lastEmit && ts - lastEmit < SLASH_RATE_MS) return; // レート制限
+
+    // 距離/速度チェック（★初動ロック防止: lastEmit未設定時は直近の移動イベント基準）
+    const dx = pointerPos.x - lastPos.x;
+    const dy = pointerPos.y - lastPos.y;
+    const dist = Math.hypot(dx,dy);
+    const since = Math.max(1, lastEmit ? (ts - lastEmit) : (ts - lastMoveTime));
+    const speed = dist / since; // px/ms
+
+    if(dist < MOVE_DIST_MIN || speed < MIN_SPEED) return;
+
+    const angle = Math.atan2(dy,dx); // 移動方向へ走らせる
+    addSlash(pointerPos, angle);
+    lastEmit = ts;
+  }
+
+  function applyDamage(dmg){
+    enemy.pulse=Math.min(1,enemy.pulse+dmg/(MAX_DMG*3));enemy.hp=Math.max(0,enemy.hp-dmg);
+    const r=enemy.hp/enemy.hpMax;hpFill.style.width=`${r*100}%`;hpText.textContent=`${Math.round(r*100)}%`;
+    if(enemy.hp<=0){victory.classList.add('show');setTimeout(()=>location.reload(),3000);} // 3秒後リロード
+  }
+
+  let dt=0,lastTs=0;
+  function loop(ts){dt=ts-lastTs;if(!lastTs)dt=16;lastTs=ts;updateEnemy(dt,ts);maybeEmitSlash(ts);ctx.clearRect(0,0,W,H);
+
+    for(let i=slashes.length-1;i>=0;i--){const s=slashes[i];const t=ts-s.t0;const prog=clamp(t/RUN_DURATION,0,1);const uEnd=prog;const uStart=clamp(uEnd-(HEAD_LEN/s.len),0,1);
+      if(!s.hit&&uEnd>=s.uHit){const cx=s.x1+s.uHit*(s.x2-s.x1);const cy=s.y1+s.uHit*(s.y2-s.y1);const d=Math.hypot(cx-enemy.x,cy-enemy.y);const f=clamp(1-d/enemy.r,0,1);const dmg=Math.round(MAX_DMG*easeOutQuad(f));if(dmg>0)applyDamage(dmg);s.hit=true;}
+      const alpha=1-prog;ctx.globalAlpha=0.85*alpha;ctx.lineWidth=LINE_WIDTH;
+      const ax=s.x1+uStart*(s.x2-s.x1),ay=s.y1+uStart*(s.y2-s.y1);const bx=s.x1+uEnd*(s.x2-s.x1),by=s.y1+uEnd*(s.y2-s.y1);
+      const midx=(ax+bx)/2,midy=(ay+by)/2;const dmid=Math.hypot(midx-enemy.x,midy-enemy.y);const core=clamp(1-dmid/enemy.r,0,1);
+      const g=Math.floor(140+100*core);ctx.strokeStyle=`rgba(255,${g},${170+Math.floor(60*core)},1)`;ctx.shadowColor=ctx.strokeStyle;ctx.shadowBlur=20*(0.6+0.8*core)*alpha;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;if(prog>=1)slashes.splice(i,1);}
+
+    const pulseScale=1+enemy.pulse*0.05;enemy.pulse=Math.max(0,enemy.pulse-dt*0.0025);
+    ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';const size=Math.min(ENEMY_FONT_BASE,Math.floor(W*0.25));ctx.font=`${Math.floor(size*pulseScale)}px "Apple Color Emoji","Segoe UI Emoji"`;ctx.filter='drop-shadow(0 8px 20px rgba(0,0,0,.45))';ctx.fillStyle='#fff';ctx.fillText(ENEMY_EMOJI,enemy.x,enemy.y+size*0.04);ctx.restore();
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  resetBtn.onclick=()=>location.reload();
+})();
+</script>
+</body>
+</html>
