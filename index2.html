@@ -180,10 +180,12 @@ async function nextScene(){
     lastEmit = ts;
   }
 
+let isExec = false;
+
   function applyDamage(dmg){
     enemy.pulse=Math.min(1,enemy.pulse+dmg/(MAX_DMG*3));enemy.hp=Math.max(0,enemy.hp-dmg);
     const r=enemy.hp/enemy.hpMax;hpFill.style.width=`${r*100}%`;hpText.textContent=`${Math.round(r*100)}%`;
-    if(enemy.hp<=0){victory.classList.add('show');setTimeout(()=> nextScene(), 3000);} // 3秒後リロード
+    if(enemy.hp<=0){victory.classList.add('show');if(isExec) return;isExec = true;setTimeout(()=> nextScene(), 3000);} // 3秒後リロード
   }
 
   let dt=0,lastTs=0;
