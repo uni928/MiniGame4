@@ -26,6 +26,7 @@
     <div class="hpbar"><div class="hpfill" id="hpFill"></div></div>
     <span class="hptext" id="hpText">100%</span>
   </div>
+  <div class="card" id="killsCard">累計撃破：<span id="killCount">0</span></div>
   <button class="btn" id="resetBtn">リセット</button>
 </div>
 <canvas id="stage"></canvas>
@@ -58,6 +59,70 @@
   addEventListener('resize',resize);resize();
 
   let slashes=[];let dragging=false,lastEmit=0,lastPos={x:0,y:0},pointerPos={x:0,y:0},lastMoveTime=0;
+
+// === IndexedDB (累計撃破数) ==========================================
+const DB_NAME = 'emojiSlashDB';
+const STORE   = 'kv';
+let db = null;
+
+function openDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(STORE)){
+        db.createObjectStore(STORE, { keyPath: 'key' });
+      }
+    };
+    req.onsuccess = () => { db = req.result; resolve(db); };
+    req.onerror   = () => reject(req.error);
+  });
+}
+function getKV(key){
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const st = tx.objectStore(STORE);
+    const rq = st.get(key);
+    rq.onsuccess = () => resolve(rq.result ? rq.result.value : undefined);
+    rq.onerror   = () => reject(rq.error);
+  });
+}
+function setKV(key, value){
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const st = tx.objectStore(STORE);
+    const rq = st.put({ key, value });
+    rq.onsuccess = () => resolve();
+    rq.onerror   = () => reject(rq.error);
+  });
+}
+
+// 表示更新
+const killCountEl = document.getElementById('killCount');
+let killCount = 0;
+function renderKillCount(){
+  if(killCountEl) killCountEl.textContent = String(killCount);
+}
+
+// 起動時にロード
+openDB().then(async () => {
+  const saved = await getKV('kills');
+  killCount = (saved ?? 0);
+  renderKillCount();
+}).catch(console.error);
+
+// 勝利後の「次シーンへ」処理（+1してから画面更新）
+async function nextScene(){
+  try{
+    const current = (await getKV('kills')) ?? 0;
+    await setKV('kills', current + 1);
+  }catch(err){
+    // 失敗してもゲーム続行（画面更新）
+    console.warn('Save kill failed:', err);
+  }
+  location.reload();
+}
+
 
   function getPoint(e){if(e.touches){return{x:e.touches[0].clientX,y:e.touches[0].clientY}}return{x:e.clientX,y:e.clientY}}
   function pointerDown(e){
@@ -118,7 +183,7 @@
   function applyDamage(dmg){
     enemy.pulse=Math.min(1,enemy.pulse+dmg/(MAX_DMG*3));enemy.hp=Math.max(0,enemy.hp-dmg);
     const r=enemy.hp/enemy.hpMax;hpFill.style.width=`${r*100}%`;hpText.textContent=`${Math.round(r*100)}%`;
-    if(enemy.hp<=0){victory.classList.add('show');setTimeout(()=>location.reload(),3000);} // 3秒後リロード
+    if(enemy.hp<=0){victory.classList.add('show');setTimeout(()=> nextScene(), 3000);} // 3秒後リロード
   }
 
   let dt=0,lastTs=0;
@@ -143,4 +208,3 @@
 </script>
 </body>
 </html>
-
