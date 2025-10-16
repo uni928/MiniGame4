@@ -94,6 +94,7 @@
 (() => {
   const ORIGINAL = "春はあけぼの。やうやう白くなりゆく山ぎは、少し明かりて、紫だちたる雲の細くたなびきたる。";
   const subtleEdits = [
+    s => s.replace("あけぼの","あげぽよ"),
     s => s.replace("やうやう","ようよう"),
     s => s.replace("山ぎは","山際"),
     s => s.replace("少し","すこし"),
@@ -103,7 +104,6 @@
     s => s.replace("たなびきたる","たなびける"),
     s => s.replace("。","、"),
     s => s.replace("、","，"),
-    s => s.replace("山ぎは","山ぎは\u00A0"),
     s => s.replace("雲の","雲 の"),
     s => s.replace("あけぼの","あけもの"),
     s => s.replace("白く","白 く"),
@@ -202,4 +202,5 @@
 })();
 </script>
 </body>
+
 </html>
